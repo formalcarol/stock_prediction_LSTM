@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
 import mplfinance as mpf
-from talib.abstract import EMA
+from talib.abstract import EMA, RSI
 import seaborn as sns
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
@@ -39,13 +39,13 @@ def train_lstm(data, company):
     # 建立模型
     model = Sequential()
     model.add(LSTM(128, return_sequences=True, input_shape=(x_train.shape[1], 1)))
-    model.add(LSTM(64, return_sequences=False))
+    model.add(LSTM(32, return_sequences=False))
     model.add(Dense(25))
     model.add(Dense(1))
     model.compile(optimizer='adam', loss='mean_squared_error')
 
     # 訓練模型
-    model.fit(x_train, y_train, batch_size=64, epochs=3, validation_split=0.1)
+    model.fit(x_train, y_train, batch_size=64, epochs=5, validation_split=0.1)
     model.save(f'lstm_model_{company}.h5')
     
 def test_lstm(data, company):
@@ -84,30 +84,36 @@ def test_lstm(data, company):
     plt.savefig(f'{company}_pred.jpg')
     plt.close()
 
+    return rmse
+
 if __name__ == '__main__':
     company_list = ['2330.tw', '2454.tw', '2317.tw', '2412.tw', '2308.tw'] # 台積電 聯發科 鴻海 中華電信 台達電
-    #company_list = ['2330.tw']
     all_data = pd.DataFrame()
 
-    # 下載 2008/01-現在 的股價資料
+    # 下載 2008/01-現在 的股價資料和技術指標
     for company in company_list:
         data = yf.download(company, period='16y', interval='1d')
+
+        data['20ma'] = EMA(data['Close'], timeperiod=20)
+        data['50ma'] = EMA(data['Close'], timeperiod=50)
+        data['120ma'] = EMA(data['Close'], timeperiod=120)
+        data['14rsi'] = RSI(data['Close'], timeperiod=14)
         data['Company'] = company
-        all_data = pd.concat([all_data, data])
+
+        all_data = pd.concat([data, all_data])
 
     # 切割資料集
-    train_data = all_data.loc['2008-01-01':'2023-06-30']
+    train_data = all_data.loc['2008-07-01':'2023-06-30']
     test_data = all_data.loc['2023-07-01':]
     train_data.to_csv("train.csv")
     test_data.to_csv("test.csv")
         
     # 5間公司的K線圖 & 120天移動平均線
     for company in company_list:
-        k_data = train_data[train_data['Company'] == company]
-        k_data['ema'] = EMA(k_data['Close'], timeperiod=120)
+        pic_data = train_data[train_data['Company'] == company]
         addp=[]
-        addp.append(mpf.make_addplot(k_data['ema']))
-        chart_candle(k_data, addp=addp, jpg_name=f"{company[:4]}.jpg")
+        addp.append(mpf.make_addplot(pic_data['120ma']))
+        chart_candle(pic_data, addp=addp, jpg_name=f"{company[:4]}.jpg")
 
     # 不同股票的相關性分析
     closing_dff = train_data.pivot(columns='Company', values='Adj Close')
@@ -115,7 +121,9 @@ if __name__ == '__main__':
     relation_heatmap(tech_rets, company_list)
 
     # 訓練LSTM預測股票
+    rmse = []
     for company in company_list:
         train_lstm(train_data[train_data['Company'] == company], company[:4])
-        test_lstm(test_data[test_data['Company'] == company], company[:4])
+        rmse.append(test_lstm(test_data[test_data['Company'] == company], company[:4]))
         print(f"------- {company} Completed -------")
+    print(rmse)
